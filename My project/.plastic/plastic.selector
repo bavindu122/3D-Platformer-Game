@@ -1,0 +1,3 @@
+repository "My project/First-3D-Game@18968289451044@cloud"
+  path "/"
+    smartbranch "/main/Exp"
