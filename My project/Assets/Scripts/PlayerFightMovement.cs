@@ -18,6 +18,14 @@ public class PlayerFightMovement : MonoBehaviour
     [SerializeField] float dodgeCooldown = 0.5f;
     [SerializeField] float dodgeIFrames = 0.3f;         // invulnerability window
     [SerializeField] bool dodgeUsesMoveDirection = true;// else forward
+                                                        // Tuning
+    [SerializeField] bool backstepOnlyWhenNoInput = true; // if true, S+Ctrl will roll in input dir; backstep only with no input
+    [SerializeField] float backIntentDot = -0.6f;         // if you want backstep when pulling back, threshold vs transform.forward
+    Vector3 lastMoveWorldDir;                              // remember last non-zero move (world space)
+    [SerializeField] float directionalDodgeMemory = 0.08f; // seconds after release to still count last input
+    float lastNonZeroInputTime = -999f;                     // when a non-zero raw input was last seen
+
+
 
     [Header("Landing Prediction")]
     [SerializeField] float landingAnticipation = 0.2f;
@@ -167,6 +175,7 @@ public class PlayerFightMovement : MonoBehaviour
         if (isGrounded) lastGroundedTime = Time.time;
 
         Vector3 move = ReadMovementInput();
+        if (move.sqrMagnitude > 0.0004f) lastMoveWorldDir = move.normalized;
         float moveMag = move.magnitude;
         float currentSpeed = speed;
 
@@ -186,7 +195,7 @@ public class PlayerFightMovement : MonoBehaviour
         {
             bufferLight = true;
             lastPressedTime = Time.time;
-        }
+        }   
         HandleAttacks();
 
         if (!isDodging)
@@ -292,51 +301,52 @@ public class PlayerFightMovement : MonoBehaviour
     // DODGE
     void HandleDodge(Vector3 move)
     {
-        if (isDodging && Time.time >= dodgeEndTime)
-        {
-            isDodging = false;
-            return;
-        }
+        if (isDodging && Time.time >= dodgeEndTime) { isDodging = false; return; }
 
         if (!isDodging && isGrounded && Time.time >= dodgeNextTime && Input.GetKeyDown(dodgeKey))
         {
             tpc?.HardLock(Mathf.Min(dodgeDuration * 0.5f, 0.12f));
             tpc?.BoostFollow(0.25f, 6f);
 
-            Vector3 rawDir = ReadRawMovementDir();
-            bool hasInput = rawDir.sqrMagnitude > 0.0004f;
-            bool backPressed = false;
-
-            Vector3 camF = cam.transform.forward; camF.y = 0f; camF.Normalize();
-            float forwardDot = hasInput ? Vector3.Dot(rawDir.normalized, camF) : 0f;
-
-            if (hasInput && forwardDot < -0.5f) backPressed = true;
-
-            if (!hasInput || backPressed)
+            // 1) read camera-relative input
+            Vector3 dir = ReadRawMovementDir();
+            bool hasInput = dir.sqrMagnitude > 0.0004f;
+            dir.y = 0f;
+            bool recentlyHadInput = (Time.time - lastNonZeroInputTime) <= directionalDodgeMemory;
+            if (!hasInput && !backstepOnlyWhenNoInput && recentlyHadInput && lastMoveWorldDir.sqrMagnitude > 0.0001f)
             {
-                dodgeDir = (-transform.forward);
-                foreach (Animator a in anims) a.SetTrigger(DodgeTrigHash);
+                dir = lastMoveWorldDir;
+                hasInput = true;
             }
-            else
-            {
-                dodgeDir = rawDir.normalized;
-                foreach (Animator a in anims) a.SetTrigger(RollTrigHash);
-            }
+
+            // 3) decide backstep intent relative to CHARACTER facing, not camera
+       bool backIntent = backstepOnlyWhenNoInput ? !hasInput
+                                          : (hasInput ? Vector3.Dot(dir.normalized, transform.forward) <= backIntentDot : true);
+
+// 4) pick direction
+if (backIntent)
+{
+    dodgeDir = (-transform.forward).normalized;
+    foreach (Animator a in anims) a.SetTrigger(DodgeTrigHash);
+}
+else
+{
+    dodgeDir = dir.normalized;
+    foreach (Animator a in anims) a.SetTrigger(RollTrigHash);
+}
 
             dodgeDir = new Vector3(dodgeDir.x, 0f, dodgeDir.z).normalized;
-
             isDodging = true;
             dodgeEndTime = Time.time + dodgeDuration;
             dodgeNextTime = Time.time + dodgeCooldown;
-
             velocity.y = 0f;
             controller.Move(dodgeDir * dodgeSpeed * Time.deltaTime);
             tpc?.HardLock(0.06f);
-
             dodgeIFrameActive = true;
             dodgeIFrameEnd = Time.time + dodgeIFrames;
         }
-    } // [1]
+    }
+    // [1]
 
     public bool IsInvulnerable()
     {
@@ -410,7 +420,7 @@ public class PlayerFightMovement : MonoBehaviour
         }
 
         // Start new combo if idle and buffered
-        if (!inAnyAttack && currentAttack == AttackType.None && !isDodging)
+        if (!inAnyAttack && currentAttack == AttackType.None && !isDodging && isGrounded)
         {
             if (bufferHeavy && heavyStates.Length > 0)
             {

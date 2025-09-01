@@ -1,19 +1,14 @@
 using UnityEngine;
 public class Collectible : MonoBehaviour
-{
-    public int scoreValue = 10;
-    
+{   
     void OnTriggerEnter(Collider other)
     {
-        if (other.gameObject.CompareTag("Player"))
+        PlayerInventory playerInventory = other.GetComponent<PlayerInventory>();
+        
+        if(playerInventory != null )
         {
-            // Find the ScoreManager and add score
-            ScoreManager scoreManager = FindObjectOfType<ScoreManager>();
-            if (scoreManager != null)
-            {
-                scoreManager.AddScore(scoreValue);
-            }
-            
+            playerInventory.GemColledted();
+            gameObject.SetActive(false);
             Destroy(gameObject);
         }
     }
